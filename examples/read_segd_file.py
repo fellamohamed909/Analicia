@@ -9,7 +9,7 @@ Usage:
 """
 import sys
 import pprint
-from segd.rev3.reader import SegDReader
+from segd.readers.rev3.reader import SegDReader
 
 def main():
     """

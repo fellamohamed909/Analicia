@@ -21,3 +21,8 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/example/segd-project"
 "Bug Tracker" = "https://github.com/example/segd-project/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["segd*", "segd_copier*"]
+exclude = ["tests*"]

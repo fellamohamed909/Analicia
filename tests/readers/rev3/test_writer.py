@@ -6,9 +6,9 @@ where we read a file, write it back, and check for consistency.
 """
 import pytest
 import io
-from segd.rev3.reader import SegDReader
-from segd.rev3.writer import SegDWriter
-from segd.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
+from segd.readers.rev3.reader import SegDReader
+from segd.readers.rev3.writer import SegDWriter
+from segd.readers.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
 
 @pytest.fixture
 def sample_gh_data():

@@ -3,34 +3,42 @@ import os
 
 FILENAME = "dummy_tape.bin"
 BLOCK_SIZE = 32768
-NUM_BLOCKS = 3
+NUM_RECORDS = 3
+HEADER_SIZE = 96  # 3 General Header blocks
 
-print(f"Génération du fichier de test '{FILENAME}'...")
+print(f"Generating test file '{FILENAME}'...")
 
 with open(FILENAME, "wb") as f:
-    for i in range(NUM_BLOCKS):
-        # Créer un en-tête de 32 octets avec des valeurs de test
-        file_number = 123 + i
-        format_code = 88 # CORRIGÉ: 88 est une valeur valide pour un octet (était 8058)
-        year = 24 # for 2024
-        # Le jour 254 + 2 = 256, ce qui est valide pour un Unsigned Short (H)
-        day_of_year = 254 + i
+    # --- Create a valid SEGD Rev 3.0 Header ---
 
-        # Format string pour un en-tête de 32 octets (Big Endian)
-        header = struct.pack(
-            '>H B 3x B H 23x',
-            file_number,
-            format_code,
-            year,
-            day_of_year
-        )
+    # General Header 1 (32 bytes)
+    gh1 = bytearray(32)
 
-        # Créer un bloc complet avec l'en-tête et du padding de zéros
-        padding_size = BLOCK_SIZE - len(header)
-        padding = b'\x00' * padding_size
-        block = header + padding
+    # General Header 2 (32 bytes) - with version number
+    gh2 = bytearray(32)
+    gh2[10] = 3  # Major Revision 3
+    gh2[11] = 0  # Minor Revision 0
+
+    # General Header 3 (32 bytes)
+    gh3 = bytearray(32)
+
+    f.write(gh1)
+    f.write(gh2)
+    f.write(gh3)
+
+    # --- Create Data Records ---
+    for i in range(NUM_RECORDS):
+        # Create a record header (32 bytes) with some dummy info
+        record_header = bytearray(32)
+        struct.pack_into('>H', record_header, 0, 123 + i) # File number
+
+        # Create a full block with the header and padding
+        data_size = BLOCK_SIZE - len(record_header)
+        data_padding = b'\x01' * data_size # Use non-zero data
+        block = record_header + data_padding
 
         f.write(block)
 
-print(f"Fichier de test '{FILENAME}' créé avec {NUM_BLOCKS} blocs de {BLOCK_SIZE} octets.")
-print(f"Taille totale attendue: {NUM_BLOCKS * BLOCK_SIZE} octets.")
+total_size = HEADER_SIZE + (NUM_RECORDS * BLOCK_SIZE)
+print(f"Test file '{FILENAME}' created with {NUM_RECORDS} records.")
+print(f"Total expected size: {total_size} bytes.")

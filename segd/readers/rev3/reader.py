@@ -9,7 +9,7 @@ import struct
 from typing import Optional, IO
 
 from segd.common.binary_utils import read_bcd
-from segd.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
+from .definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
 
 class SegDReader:
     """
@@ -132,3 +132,22 @@ class SegDReader:
             data_size_bytes=ds, header_size_bytes=hs,
             extended_recording_mode=erm, relative_time_mode=rtm
         )
+
+    def read_records(self, block_size=32768):
+        """
+        A generator that reads the data portion of the SEGD file.
+
+        This is a simplified implementation that assumes the data records
+        follow immediately after the first 96 bytes of general headers.
+        It reads the rest of the stream in fixed-size blocks.
+
+        Args:
+            block_size: The size of chunks to read from the stream.
+
+        Yields:
+            A block of bytes for each record.
+        """
+        # Assume headers have been read or skipped. Data starts after GH1, GH2, GH3.
+        self.stream.seek(96)
+        while chunk := self.stream.read(block_size):
+            yield chunk

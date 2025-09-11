@@ -31,7 +31,7 @@ The library is designed to work with stream objects. You are responsible for ope
 The `SegDReader` class is used to read data from a stream.
 
 ```python
-from segd.rev3.reader import SegDReader
+from segd.readers.rev3.reader import SegDReader
 import pprint
 
 try:
@@ -59,8 +59,8 @@ See `examples/read_segd_file.py` for a complete example.
 The `SegDWriter` class is used to write data to a stream. You first create instances of the header dataclasses.
 
 ```python
-from segd.rev3.writer import SegDWriter
-from segd.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
+from segd.readers.rev3.writer import SegDWriter
+from segd.readers.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
 
 # 1. Create your header data objects
 gh1 = GeneralHeader1(file_number=1, format_code=8058, ...)
@@ -102,3 +102,28 @@ To run the test suite, use `pytest`:
 ```bash
 pytest
 ```
+
+## Creating a Portable Executable
+
+To create a single-file, portable executable for Linux, you can use `PyInstaller`.
+
+1.  **Install PyInstaller** (if you haven't already):
+    ```bash
+    pip install pyinstaller
+    ```
+
+2.  **Build the Executable**:
+    From the root of the project directory, run the following command:
+    ```bash
+    pyinstaller --name Analicia --onefile --windowed --add-data "segd:segd" segd_copier/main_gui.py
+    ```
+    *   `--name Analicia`: Sets the name of the output executable.
+    *   `--onefile`: Packages everything into a single executable file.
+    *   `--windowed`: Prevents a console window from appearing when the GUI is run.
+    *   `--add-data "segd:segd"`: This is crucial. It tells PyInstaller to bundle the entire `segd` package with the executable, which is necessary for the application to find its core library.
+
+3.  **Run the Application**:
+    The final executable will be located in the `dist/` directory. You can run it directly:
+    ```bash
+    ./dist/Analicia
+    ```

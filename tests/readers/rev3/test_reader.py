@@ -4,7 +4,7 @@ Tests for the SEGD Rev 3 Reader.
 import pytest
 import struct
 import io
-from segd.rev3.reader import SegDReader
+from segd.readers.rev3.reader import SegDReader
 
 @pytest.fixture
 def simple_segd_stream():

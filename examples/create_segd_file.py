@@ -8,8 +8,8 @@ Usage:
     python examples/create_segd_file.py <output_path.segd>
 """
 import sys
-from segd.rev3.writer import SegDWriter
-from segd.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
+from segd.readers.rev3.writer import SegDWriter
+from segd.readers.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
 
 def get_sample_headers():
     """Returns a tuple of sample GeneralHeader dataclass instances."""

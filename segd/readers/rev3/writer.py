@@ -8,7 +8,7 @@ writing data into a valid SEGD Rev 3 file. It takes structured data
 import struct
 from typing import IO
 from segd.common.binary_utils import write_bcd
-from segd.rev3.definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
+from .definitions import GeneralHeader1, GeneralHeader2, GeneralHeader3
 
 class SegDWriter:
     """
