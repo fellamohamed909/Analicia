@@ -13,11 +13,14 @@ class MainApplication(tk.Frame):
         tk.Frame.__init__(self, parent, *args, **kwargs)
         self.parent = parent
 
-        self.parent.title("Utilitaire de Copie SEGD")
+        self.parent.title("Utilitaire de Transcription SEGD")
         self.parent.geometry("850x600")
         self.parent.minsize(700, 450)
 
         self.copy_queue = queue.Queue()
+        self.pause_event = threading.Event()
+        self.stop_event = threading.Event()
+
         self._create_widgets()
 
     def _select_source_file(self):
@@ -51,61 +54,68 @@ class MainApplication(tk.Frame):
             self.dest_path.set(path)
             self.status_text.set(f"Destination: {path}")
 
-    def _start_analysis(self):
-        """Starts the source analysis process."""
-        source = self.source_path.get()
-        if not source:
-            messagebox.showerror("Erreur", "Le chemin source doit être spécifié.")
-            return
+    def _toggle_copy_state(self):
+        """Handles clicks on the Start/Pause/Resume button."""
+        button_text = self.start_pause_button.cget("text")
 
-        self._log(f"Analyse de la source : {source}...")
-        self.copy_button.config(state="disabled")
+        if button_text == "Démarrer":
+            source = self.source_path.get()
+            dest = self.dest_path.get()
+            if not source or not dest:
+                messagebox.showerror("Erreur", "Les chemins source et destination doivent être spécifiés.")
+                return
 
-        version = analyze_source(source)
+            try:
+                max_size_mb = int(self.max_size_var.get())
+            except ValueError:
+                messagebox.showerror("Erreur", "La taille maximale doit être un nombre entier.")
+                return
+            max_size_bytes = max_size_mb * 1024 * 1024
 
-        if version:
-            self._log(f"Source valide détectée : SEGD Version {version}.")
-            self.status_text.set(f"Prêt à copier (SEGD Rev {version}).")
-            self.copy_button.config(state="normal")
-        else:
-            self._log("Erreur: Format de source non reconnu ou fichier invalide.")
-            self.status_text.set("Analyse échouée.")
-            messagebox.showerror("Analyse échouée", "Le fichier source n'est pas un fichier SEGD valide ou est illisible.")
+            self.log_text.config(state="normal")
+            self.log_text.delete(1.0, tk.END)
+            self.log_text.config(state="disabled")
 
-    def _start_copy(self):
-        """Validates paths and starts the transcription process in a thread."""
-        source = self.source_path.get()
-        dest = self.dest_path.get()
+            self._log("Démarrage de la transcription...")
 
-        if not source or not dest:
-            messagebox.showerror("Erreur", "Les chemins source et destination doivent être spécifiés.")
-            return
+            self.progress_var.set(0)
+            self.progress_size_text.set("0 MB / 0 MB")
+            self.progress_speed_text.set("0 MB/s")
+            self.bytes_copied = 0
+            self.total_size = 0
+            self.start_time = time.time()
 
-        self.log_text.config(state="normal")
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.config(state="disabled")
+            self.pause_event.clear()
+            self.stop_event.clear()
 
-        self._log("Démarrage de la transcription...")
+            self._set_ui_state("copying")
 
-        self.progress_var.set(0)
-        self.progress_size_text.set("0 MB / 0 MB")
-        self.progress_speed_text.set("0 MB/s")
-        self.bytes_copied = 0
-        self.total_size = 0
-        self.start_time = time.time()
+            thread_args = (source, dest, max_size_bytes, self.pause_event, self.stop_event, self.copy_queue)
+            thread = threading.Thread(target=self._copy_worker, args=thread_args)
+            thread.daemon = True
+            thread.start()
+            self.parent.after(100, self._process_queue)
 
-        self._set_ui_state("disabled")
+        elif button_text == "Pause":
+            self.pause_event.set()
+            self._log("Copie mise en pause.")
+            self.start_pause_button.config(text="Reprendre")
 
-        thread = threading.Thread(target=self._copy_worker, args=(source, dest, self.copy_queue))
-        thread.daemon = True
-        thread.start()
+        elif button_text == "Reprendre":
+            self.pause_event.clear()
+            self._log("Reprise de la copie...")
+            self.start_pause_button.config(text="Pause")
 
-        self.parent.after(100, self._process_queue)
+    def _stop_copy(self):
+        """Signals the worker thread to stop."""
+        self._log("Arrêt de la copie demandé...")
+        self.stop_event.set()
+        self.stop_button.config(state="disabled")
 
-    def _copy_worker(self, source, dest, q):
+    def _copy_worker(self, source, dest, max_size, pause_event, stop_event, q):
         """The thread-safe function that calls the controller and puts results in the queue."""
         try:
-            for entry in transcribe_data(source, dest):
+            for entry in transcribe_data(source, dest, max_size, pause_event, stop_event):
                 q.put(entry)
         except Exception as e:
             q.put(e)
@@ -126,14 +136,14 @@ class MainApplication(tk.Frame):
                 msg = self.copy_queue.get_nowait()
 
                 if msg is None:
-                    self._set_ui_state("normal")
+                    self._set_ui_state("idle")
                     return
                 elif isinstance(msg, Exception):
                     error_msg = f"Erreur de Transcription: {msg}"
                     messagebox.showerror("Erreur", error_msg)
                     self._log(error_msg)
                     self.status_text.set("Erreur.")
-                    self._set_ui_state("normal")
+                    self._set_ui_state("idle")
                     return
 
                 if 'error' in msg:
@@ -184,18 +194,29 @@ class MainApplication(tk.Frame):
             self.parent.after(100, self._process_queue)
 
     def _set_ui_state(self, state):
-        """Enables or disables interactive widgets."""
-        if state == "disabled":
-            self.analyze_button.config(state="disabled")
-            self.copy_button.config(state="disabled")
-        else:
-            self.analyze_button.config(state="normal")
-
-        self._update_widget_states()
+        """Enables or disables interactive widgets based on application state."""
+        if state == "copying":
+            self.start_pause_button.config(text="Pause")
+            self.stop_button.config(state="normal")
+            # Disable configuration widgets
+            for child in self.source_frame.winfo_children():
+                child.configure(state='disabled')
+            for child in self.dest_frame.winfo_children():
+                child.configure(state='disabled')
+        else:  # "idle" or "finished"
+            self.start_pause_button.config(text="Démarrer")
+            self.stop_button.config(state="disabled")
+            # Re-enable configuration widgets
+            for child in self.source_frame.winfo_children():
+                child.configure(state='normal')
+            for child in self.dest_frame.winfo_children():
+                child.configure(state='normal')
+            self._update_widget_states() # Re-apply tape-specific disables
 
     def _update_widget_states(self):
         """Enable/disable widgets based on radio button selections."""
-        if self.analyze_button['state'] == 'disabled':
+        # This check prevents trying to configure widgets while they are globally disabled
+        if self.start_pause_button['state'] == 'disabled':
             return
 
         if self.source_type.get() == "tape":
@@ -221,32 +242,32 @@ class MainApplication(tk.Frame):
         config_panel.columnconfigure(0, weight=1)
         config_panel.columnconfigure(1, weight=1)
 
-        source_frame = ttk.LabelFrame(config_panel, text="Source", padding="10")
-        source_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-        source_frame.columnconfigure(1, weight=1)
+        self.source_frame = ttk.LabelFrame(config_panel, text="Source", padding="10")
+        self.source_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.source_frame.columnconfigure(1, weight=1)
 
         self.source_type = tk.StringVar(value="file")
-        ttk.Radiobutton(source_frame, text="Fichier(s)", variable=self.source_type, value="file", command=self._update_widget_states).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(source_frame, text="Bande Magnétique", variable=self.source_type, value="tape", command=self._update_widget_states).grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(self.source_frame, text="Fichier(s)", variable=self.source_type, value="file", command=self._update_widget_states).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(self.source_frame, text="Bande Magnétique", variable=self.source_type, value="tape", command=self._update_widget_states).grid(row=0, column=1, sticky="w")
 
         self.source_path = tk.StringVar()
-        source_entry = ttk.Entry(source_frame, textvariable=self.source_path, width=40)
+        source_entry = ttk.Entry(self.source_frame, textvariable=self.source_path, width=40)
         source_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
-        self.source_button = ttk.Button(source_frame, text="Parcourir Fichiers...", command=self._select_source_file)
+        self.source_button = ttk.Button(self.source_frame, text="Parcourir Fichiers...", command=self._select_source_file)
         self.source_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=5)
 
-        dest_frame = ttk.LabelFrame(config_panel, text="Destination", padding="10")
-        dest_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
-        dest_frame.columnconfigure(1, weight=1)
+        self.dest_frame = ttk.LabelFrame(config_panel, text="Destination", padding="10")
+        self.dest_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        self.dest_frame.columnconfigure(1, weight=1)
 
         self.dest_type = tk.StringVar(value="file")
-        ttk.Radiobutton(dest_frame, text="Fichier/Répertoire", variable=self.dest_type, value="file", command=self._update_widget_states).grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(dest_frame, text="Bande Magnétique", variable=self.dest_type, value="tape", command=self._update_widget_states).grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(self.dest_frame, text="Fichier/Répertoire", variable=self.dest_type, value="file", command=self._update_widget_states).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(self.dest_frame, text="Bande Magnétique", variable=self.dest_type, value="tape", command=self._update_widget_states).grid(row=0, column=1, sticky="w")
 
         self.dest_path = tk.StringVar()
-        dest_entry = ttk.Entry(dest_frame, textvariable=self.dest_path, width=40)
+        dest_entry = ttk.Entry(self.dest_frame, textvariable=self.dest_path, width=40)
         dest_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
-        self.dest_button = ttk.Button(dest_frame, text="Parcourir...", command=self._select_dest_file)
+        self.dest_button = ttk.Button(self.dest_frame, text="Parcourir...", command=self._select_dest_file)
         self.dest_button.grid(row=2, column=0, columnspan=2, sticky="e", pady=5)
 
         progress_frame = ttk.LabelFrame(main_frame, text="Progression", padding="10")
@@ -276,20 +297,25 @@ class MainApplication(tk.Frame):
 
         controls_frame = ttk.Frame(main_frame, padding="5")
         controls_frame.pack(fill="x", expand=False)
-        controls_frame.columnconfigure(0, weight=1)
+        controls_frame.columnconfigure(2, weight=1)
+
+        ttk.Label(controls_frame, text="Taille max. sortie (Mo):").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.max_size_var = tk.StringVar(value="0")
+        max_size_entry = ttk.Entry(controls_frame, textvariable=self.max_size_var, width=10)
+        max_size_entry.grid(row=0, column=1, sticky="w")
+
+        self.start_pause_button = ttk.Button(controls_frame, text="Démarrer", command=self._toggle_copy_state)
+        self.start_pause_button.grid(row=0, column=3, sticky="e", padx=5)
+
+        self.stop_button = ttk.Button(controls_frame, text="Arrêter", command=self._stop_copy, state="disabled")
+        self.stop_button.grid(row=0, column=4, sticky="e", padx=5)
+
+        quit_button = ttk.Button(controls_frame, text="Quitter", command=self.parent.destroy)
+        quit_button.grid(row=0, column=5, sticky="e", padx=5)
 
         self.status_text = tk.StringVar(value="Prêt.")
         status_bar = ttk.Label(controls_frame, textvariable=self.status_text, anchor="w")
-        status_bar.grid(row=0, column=0, sticky="ew")
-
-        quit_button = ttk.Button(controls_frame, text="Quitter", command=self.parent.destroy)
-        quit_button.grid(row=0, column=1, sticky="e", padx=5)
-
-        self.analyze_button = ttk.Button(controls_frame, text="Analyser Source", command=self._start_analysis)
-        self.analyze_button.grid(row=0, column=2, sticky="e", padx=5)
-
-        self.copy_button = ttk.Button(controls_frame, text="Démarrer Transcription", command=self._start_copy, state="disabled")
-        self.copy_button.grid(row=0, column=3, sticky="e")
+        status_bar.grid(row=1, column=0, columnspan=6, sticky="ew", pady=(5,0))
 
 
 if __name__ == "__main__":

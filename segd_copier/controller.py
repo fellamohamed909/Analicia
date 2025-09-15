@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from typing import Optional
 
 from segd.analyzer import analyze_stream
@@ -28,7 +30,13 @@ def analyze_source(source_path: str) -> Optional[str]:
         return None
 
 
-def transcribe_data(source_path: str, destination_path: str):
+def transcribe_data(
+    source_path: str,
+    destination_path: str,
+    max_size_bytes: int,
+    pause_event: threading.Event,
+    stop_event: threading.Event
+):
     """
     Orchestrates the copy from a source to a destination, yielding
     real-time progress and performing a checksum validation at the end.
@@ -37,6 +45,9 @@ def transcribe_data(source_path: str, destination_path: str):
     Args:
         source_path (str): Path to the source device (or file).
         destination_path (str): Path to the destination file.
+        max_size_bytes (int): The maximum size in bytes for the output. 0 means no limit.
+        pause_event (threading.Event): Event to pause the transcription.
+        stop_event (threading.Event): Event to stop the transcription gracefully.
 
     Yields:
         dict: A dictionary containing metadata for each block or a final
@@ -74,7 +85,21 @@ def transcribe_data(source_path: str, destination_path: str):
 
                 reader = ReaderClass(source_stream)
                 record_count = 0
+                total_written_bytes = 0
+                limit_reached = False
+
                 for block in reader.read_records():
+                    if stop_event.is_set():
+                        yield {'status': "Arrêt demandé par l'utilisateur."}
+                        break
+                    if limit_reached:
+                        yield {'status': "Taille maximale atteinte, en attente de la fin du fichier."}
+                        # This is where logic to wait for a filemark would go.
+                        # For this simulation, we stop here.
+                        break
+                    while pause_event.is_set():
+                        time.sleep(0.1)
+
                     record_count += 1
                     filename = f"record_{record_count:03d}.segd"
                     output_path = os.path.join(destination_path, filename)
@@ -108,7 +133,20 @@ def transcribe_data(source_path: str, destination_path: str):
 
             # The reader itself is now the iterator for data records
             for block in reader.read_records():
+                if stop_event.is_set():
+                    yield {'status': "Arrêt demandé par l'utilisateur."}
+                    break
+                while pause_event.is_set():
+                    time.sleep(0.1)
+
                 disk_writer.write_record(block)
+
+                total_bytes += len(block)
+                if max_size_bytes > 0 and total_bytes >= max_size_bytes:
+                    yield {'status': "Taille maximale de sortie atteinte."}
+                    # For single file output, we stop immediately.
+                    break
+
                 record_count += 1
                 block_size_kb = len(block) / 1024
                 total_bytes += len(block)
@@ -167,7 +205,12 @@ if __name__ == '__main__':
         print("-" * 70)
         print("Real-time listing:")
 
-        for entry in transcribe_data(DUMMY_TAPE_PATH, OUTPUT_DISK_FILE):
+        # Create dummy events for testing
+        pause_event = threading.Event()
+        stop_event = threading.Event()
+        max_size = 0 # No limit for this test
+
+        for entry in transcribe_data(DUMMY_TAPE_PATH, OUTPUT_DISK_FILE, max_size, pause_event, stop_event):
             if 'error' in entry:
                 print(f"  ERROR: {entry['error']}")
             elif 'status' in entry:
